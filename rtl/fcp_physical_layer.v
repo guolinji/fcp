@@ -67,26 +67,191 @@ tSTART     |Transmitter is starting         |                       |        |1 
 tRESET     |Master reset pulse duration     |                       |        |100     |        |UI              |
 =================================================================================================================================================*/
 
-module fcp_logical_layer (
+module fcp_physical_layer (
     clk,
-    rst_n,
-    //
-    data,
-    tx_en,
+    rstn,
+    // I
+    pl_tx_en,
+    pl_tx_type,
+    pl_tx_data,
+    // O
+    ping_from_master,
+    reset_from_master,
+    crc_error,
+    par_error,
+    rx_data,
+    rx_data_valid,
+    tx_done,
+    // IO
+    data
 );
 
-localparam SLV_IDLE         = 4'd15
+//================================
+// IO ports
+//================================
+input               clk;
+input               rstn;
+input               pl_tx_en;
+input               pl_tx_type;
+input       [15:0]  pl_tx_data;
 
-input       clk;
-input       rst_n;
+output              ping_from_master;
+output              reset_from_master;
+output              crc_error;
+output              par_error;
+output      [23:0]  rx_data;
+output              rx_data_valid;
+output              tx_done;
 
-reg         [3:0] rx_cur_st;
-reg         [3:0] rx_nxt_st;
+inout               data;
 
-reg         [3:0] tx_cur_st;
-reg         [3:0] tx_nxt_st;
+localparam RW_IDLE         = 2'b00;
+localparam RW_STATE0       = 2'b01;
+localparam RW_STATE1       = 2'b10;
+localparam RW_STATE2       = 2'b11;
 
-reg         [] dur_cnt;
+//================================
+// Signals
+//================================
+reg         tx_ongoing_window;
+reg         tx_ongoing_d0;
+reg         tx_ongoing_d1;
+reg         tx_ongoing_d2;
+wire        out_en;
+wire        data_out;
+wire        data_in;
+reg         tx_en_flag;
+reg         tx_en;
+reg         tx_type;
+reg [15:0]  tx_data;
+reg [6:0]   cycle_cnt_after_ping;
+reg         after_mst_ping;
+reg         mst_request_after_slv_ping;
+reg         slv_request_after_ping;
+
+//========================================================================================
+//========================================================================================
+//              Main
+//========================================================================================
+//========================================================================================
+// For inout port
+assign data     = out_en ? data_out : 1'bz;
+assign data_in  = data;
+
+always @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+        tx_en_flag <= 1'b0;
+    end else if (pl_tx_en) begin
+        tx_en_flag <= 1'b1;
+    end else if (tx_en) begin
+        tx_en_flag <= 1'b0;
+    end
+end
+
+always @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+        tx_en <= 1'b0;
+    end else if (tx_en_flag & tx_ongoing_window & cycle_cnt_after_ping>20) begin
+        tx_en <= 1'b1;
+    end else begin
+        tx_en <= 1'b0;
+    end
+end
+
+always @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+        tx_type <= 1'b0;
+        tx_data <= 16'b0;
+    end else if (pl_tx_en) begin
+        tx_type <= pl_tx_type;
+        tx_data <= pl_tx_data;
+    end else if (mst_request_after_slv_ping) begin
+        tx_type <= 1'b0;
+        tx_data <= pl_tx_data;
+    end
+end
+
+// 1 UI = 20 cycle, cnt 5 UI
+always @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+        cycle_cnt_after_ping <= 7'b0;
+    end else if (ping_from_master | tx_done) begin
+        cycle_cnt_after_ping <= 7'b1;
+    end else if (cycle_cnt_after_ping == 7'd100) begin
+        cycle_cnt_after_ping <= 7'b0;
+    end else if (|cycle_cnt_after_ping) begin
+        cycle_cnt_after_ping <= cycle_cnt_after_ping + 7'b1;
+    end
+end
+
+always @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+        after_mst_ping <= 1'b0;
+    end else if (ping_from_master) begin
+        after_mst_ping <= 1'b1;
+    end else if (cycle_cnt_after_ping == 7'd100) begin
+        after_mst_ping <= 1'b0;
+    end
+end
+
+always @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+        mst_request_after_slv_ping <= 1'b0;
+    end else if (data_in & (cycle_cnt_after_ping>20 && cycle_cnt_after_ping<40)) begin
+        mst_request_after_slv_ping <= 1'b1;
+    end else if (cycle_cnt_after_ping == 7'd100) begin
+        mst_request_after_slv_ping <= 1'b0;
+    end
+end
+
+assign after_mst_ping_slv_req = tx_en_flag & (after_mst_ping && cycle_cnt_after_ping>20 && cycle_cnt_after_ping<100);
+assign after_slv_ping_slv_req = tx_en_flag & (!after_mst_ping && cycle_cnt_after_ping>60 && cycle_cnt_after_ping<100);
+always @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+        slv_request_after_ping <= 1'b0;
+    end else if (after_mst_ping_slv_req | after_slv_ping_slv_req) begin
+        slv_request_after_ping <= 1'b1;
+    end else if (cycle_cnt_after_ping == 7'd100) begin
+        slv_request_after_ping <= 1'b0;
+    end
+end
+
+always @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+        tx_ongoing_window <= 1'b0;
+    end else if (cycle_cnt_after_ping == 20) begin
+        tx_ongoing_window <= 1'b0;
+    end else if (cycle_cnt_after_ping == 60 & after_mst_ping) begin
+        tx_ongoing_window <= 1'b1;
+    end else if (cycle_cnt_after_ping == 70 & !after_mst_ping & !mst_request_after_slv_ping) begin
+        tx_ongoing_window <= 1'b1;
+    end else if (cycle_cnt_after_ping == 99 & !slv_request_after_ping) begin
+        tx_ongoing_window <= 1'b0;
+    end
+end
+
+always @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+        tx_ongoing_d0 <= 1'b0;
+    end else if (tx_ongoing_window==1'b0) begin
+        tx_ongoing_d0 <= 1'b0;
+    end else if (!slv_request_after_ping & (cycle_cnt_after_ping>=80 & cycle_cnt_after_ping<=99)) begin
+        tx_ongoing_d0 <= 1'b0;
+    end else begin
+        tx_ongoing_d0 <= tx_ongoing_window;
+    end
+end
+
+always @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+        {tx_ongoing_d2, tx_ongoing_d1} <= 2'b0;
+    end else begin
+        {tx_ongoing_d2, tx_ongoing_d1} <= {tx_ongoing_d1, tx_ongoing_d0};
+    end
+end
+
+assign out_en = tx_ongoing_window & tx_ongoing_d2;
+assign rd_en  = ~out_en;
 
 // UI = 20 clock cycle
 //========================================================================================
@@ -94,33 +259,38 @@ reg         [] dur_cnt;
 //              Rx
 //========================================================================================
 //========================================================================================
-// Reg for how many clock cycle for a pluse
+fcp_rx_ctrl U_RX_CTRL (
+    // I
+     .clk               (clk)
+    ,.rstn              (rstn)
+    ,.data              (data_in)
+    ,.rx_own_bus        (rd_en)
+    // O
+    ,.ping_from_master  (ping_from_master)
+    ,.reset_from_master (reset_from_master)
+    ,.crc_error         (crc_error)
+    ,.par_error         (par_error)
+    ,.rx_data           (rx_data)
+    ,.rx_data_valid     (rx_data_valid)
+);
 
 //========================================================================================
 //========================================================================================
 //              Tx
 //========================================================================================
 //========================================================================================
+fcp_tx_ctrl U_TX_CTRL (
+    // I
+     .clk       (clk)
+    ,.rstn      (rstn)
+    ,.tx_en     (tx_en)
+    ,.tx_type   (tx_type)
+    ,.tx_data   (tx_data)
+    // O
+    ,.data      (data_out)
+    ,.tx_done   (tx_done)
+);
 
-
-assign command_received     =;  // Rx finish
-assign data_corrupted       =;  //Rx data corrupted: bad parity or bad crc
-assign respond_done         =;  // Tx finish
-assign slave_ping_send      =;  // Tx send out Ping
-
-assign pl_bus_ready            =;
-
-
-always @(posedge clk or negedge rstn) begin
-    if (!rstn) begin
-        require_respond <= 1'b0;
-    end else if (pl_reset_from_master) begin
-        require_respond <= 1'b0;
-    end else if (command_received) begin
-        require_respond <= 1'b1;
-    end else if (respond_done) begin
-        require_respond <= 1'b0;
-    end
-end
 
 endmodule
+
