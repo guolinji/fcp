@@ -23,6 +23,7 @@ module fcp_logical_layer (
     clk,
     rstn,
     // I
+    is_support_12v,
     ping_from_master,
     reset_from_master,
     crc_error,
@@ -34,8 +35,7 @@ module fcp_logical_layer (
     pl_tx_en,
     pl_tx_type,
     pl_tx_data,
-    UP_VOLT,
-    DN_VOLT
+    out_volt
 );
 
 //================================
@@ -43,6 +43,7 @@ module fcp_logical_layer (
 //================================
 input               clk;
 input               rstn;
+input               is_support_12v;
 input               ping_from_master;
 input               reset_from_master;
 input               crc_error;
@@ -54,8 +55,7 @@ input               tx_done;
 output              pl_tx_en;
 output              pl_tx_type;
 output      [15:0]  pl_tx_data;
-output              UP_VOLT;
-output              DN_VOLT;
+output      [1:0]   out_volt; //00:5V    01:9v    10:12v    11:Reserved
 
 localparam SLV_IDLE         = 2'b00;
 localparam SLV_SEND_PING    = 2'b01;
@@ -85,11 +85,10 @@ reg [7:0]   DISCRETE_VOUT_0      ;  //0x30 DISCRETE_VOUT_0        R           8�
 reg [7:0]   DISCRETE_VOUT_1      ;  //0x31 DISCRETE_VOUT_1        R           8’xXX
 reg [7:0]   DISCRETE_VOUT_2      ;  //0x32 DISCRETE_VOUT_2        R           8’xXX
 
-reg         UP_VOLT;
-reg         DN_VOLT;
-reg [1:0]   up_step;
-reg [1:0]   down_step;
-reg [6:0]   vol_adjust_cycle_cnt;
+reg [1:0]   out_volt;
+//reg [1:0]   up_step;
+//reg [1:0]   down_step;
+//reg [6:0]   vol_adjust_cycle_cnt;
 
 reg         wr_en;
 reg         rd_en;
@@ -111,74 +110,90 @@ wire        send_ping;
 reg [1:0]   cur_st;
 reg [1:0]   nxt_st;
 
-always @(posedge clk or negedge rstn) begin // increase volt
+always @(posedge clk or negedge rstn) begin // adjust volt
     if (!rstn) begin
-        vol_adjust_cycle_cnt <= 7'b0;
+        out_volt <= 2'b0;  //5v
     end else if (OUTPUT_CONTROL[0]) begin
-        vol_adjust_cycle_cnt <= 7'b1;
-    end else if (vol_adjust_cycle_cnt==7'd100) begin
-        vol_adjust_cycle_cnt <= 7'b0;
-    end else if (|vol_adjust_cycle_cnt) begin
-        vol_adjust_cycle_cnt <= vol_adjust_cycle_cnt + 7'b1;
-    end
-end
-
-always @(posedge clk or negedge rstn) begin // increase volt
-    if (!rstn) begin
-        up_step <= 2'd0;
-    end else if (OUTPUT_CONTROL[0]) begin
-        if (VOUT_CONFIG==8'd120) begin
-            up_step <= VOUT_STATUS==8'd50 ? 2'd2 : (VOUT_STATUS==8'd90 ? 2'd1 : 2'd0);
+        if (VOUT_CONFIG==8'd50) begin
+            out_volt <= 2'b00; //5v
         end else if (VOUT_CONFIG==8'd90) begin
-            up_step <= VOUT_STATUS==8'd50 ? 2'd1 : 2'd0;
-        end else if (VOUT_CONFIG==8'd50) begin
-            up_step <= 2'd0;
+            out_volt <= 2'b01; //9v
+        end else if ((VOUT_CONFIG==8'd120) && is_support_12v) begin
+            out_volt <= 2'b10; //12v
         end
-    end else if (vol_adjust_cycle_cnt==100) begin
-        up_step <= 2'd0;
     end
 end
 
-always @(posedge clk or negedge rstn) begin // decrease volt
-    if (!rstn) begin
-        down_step <= 2'd0;
-    end else if (OUTPUT_CONTROL[0]) begin
-        if (VOUT_CONFIG==8'd90) begin
-            down_step <= VOUT_STATUS==8'd120 ? 2'd1 : 2'd0;
-        end else if (VOUT_CONFIG==8'd120) begin
-            down_step <= 2'd0;
-        end else begin
-            down_step <= VOUT_STATUS==8'd120 ? 2'd2 : (VOUT_STATUS==8'd90 ? 2'd1 : 2'd0);
-        end
-    end else if (vol_adjust_cycle_cnt==100) begin
-        down_step <= 2'd0;
-    end
-end
-
-always @(posedge clk or negedge rstn) begin
-    if (!rstn) begin
-        UP_VOLT <= 1'b0;
-        DN_VOLT <= 1'b0;
-    end else if (vol_adjust_cycle_cnt==1) begin
-        UP_VOLT <= |up_step;
-        DN_VOLT <= |down_step;
-    end else if (vol_adjust_cycle_cnt==26) begin
-        UP_VOLT <= 1'b0;
-        DN_VOLT <= 1'b0;
-    end else if (vol_adjust_cycle_cnt==51) begin
-        UP_VOLT <= up_step[1];
-        DN_VOLT <= down_step[1];
-    end else if (vol_adjust_cycle_cnt==76) begin
-        UP_VOLT <= 1'b0;
-        DN_VOLT <= 1'b0;
-    end
-end
+//always @(posedge clk or negedge rstn) begin // increase volt
+//    if (!rstn) begin
+//        vol_adjust_cycle_cnt <= 7'b0;
+//    end else if (OUTPUT_CONTROL[0]) begin
+//        vol_adjust_cycle_cnt <= 7'b1;
+//    end else if (vol_adjust_cycle_cnt==7'd100) begin
+//        vol_adjust_cycle_cnt <= 7'b0;
+//    end else if (|vol_adjust_cycle_cnt) begin
+//        vol_adjust_cycle_cnt <= vol_adjust_cycle_cnt + 7'b1;
+//    end
+//end
+//
+//always @(posedge clk or negedge rstn) begin // increase volt
+//    if (!rstn) begin
+//        up_step <= 2'd0;
+//    end else if (OUTPUT_CONTROL[0]) begin
+//        if (VOUT_CONFIG==8'd120) begin
+//            up_step <= VOUT_STATUS==8'd50 ? 2'd2 : (VOUT_STATUS==8'd90 ? 2'd1 : 2'd0);
+//        end else if (VOUT_CONFIG==8'd90) begin
+//            up_step <= VOUT_STATUS==8'd50 ? 2'd1 : 2'd0;
+//        end else if (VOUT_CONFIG==8'd50) begin
+//            up_step <= 2'd0;
+//        end
+//    end else if (vol_adjust_cycle_cnt==100) begin
+//        up_step <= 2'd0;
+//    end
+//end
+//
+//always @(posedge clk or negedge rstn) begin // decrease volt
+//    if (!rstn) begin
+//        down_step <= 2'd0;
+//    end else if (OUTPUT_CONTROL[0]) begin
+//        if (VOUT_CONFIG==8'd90) begin
+//            down_step <= VOUT_STATUS==8'd120 ? 2'd1 : 2'd0;
+//        end else if (VOUT_CONFIG==8'd120) begin
+//            down_step <= 2'd0;
+//        end else begin
+//            down_step <= VOUT_STATUS==8'd120 ? 2'd2 : (VOUT_STATUS==8'd90 ? 2'd1 : 2'd0);
+//        end
+//    end else if (vol_adjust_cycle_cnt==100) begin
+//        down_step <= 2'd0;
+//    end
+//end
+//
+//always @(posedge clk or negedge rstn) begin
+//    if (!rstn) begin
+//        UP_VOLT <= 1'b0;
+//        DN_VOLT <= 1'b0;
+//    end else if (vol_adjust_cycle_cnt==1) begin
+//        UP_VOLT <= |up_step;
+//        DN_VOLT <= |down_step;
+//    end else if (vol_adjust_cycle_cnt==26) begin
+//        UP_VOLT <= 1'b0;
+//        DN_VOLT <= 1'b0;
+//    end else if (vol_adjust_cycle_cnt==51) begin
+//        UP_VOLT <= up_step[1];
+//        DN_VOLT <= down_step[1];
+//    end else if (vol_adjust_cycle_cnt==76) begin
+//        UP_VOLT <= 1'b0;
+//        DN_VOLT <= 1'b0;
+//    end
+//end
 
 always @(posedge clk or negedge rstn) begin
     if (!rstn) begin
         VOUT_STATUS <= 8'd50;
     end else if (OUTPUT_CONTROL[0]) begin
-        VOUT_STATUS <= (VOUT_CONFIG!=8'd90 && VOUT_CONFIG!=8'd120) ? 8'd50 : VOUT_CONFIG;
+        VOUT_STATUS <=  VOUT_CONFIG==8'd50 ? 8'd50 :
+                        VOUT_CONFIG==8'd90 ? 8'd90 :
+                       (VOUT_CONFIG==8'd120) && is_support_12v ? 8'd120 : VOUT_STATUS;
     end
 end
 
@@ -186,9 +201,9 @@ end
 always @(posedge clk) begin
     DVCTYPE                 <= 8'h01;
     SPEC_VER                <= 8'h20;
-    ID_OUI0                 <= 8'b10101100;
+    ID_OUI0                 <= 8'b10111011;
     CAPABILITIES            <= 8'h01;
-    DISCRETE_CAPABILITIES   <= 8'h2;
+    DISCRETE_CAPABILITIES   <= is_support_12v ? 8'h2 : 8'h1;
     MAX_PWR                 <= 8'h40;
     DISCRETE_VOUT_0         <= 8'd50;
     DISCRETE_VOUT_1         <= 8'd90;
@@ -276,10 +291,10 @@ always @(posedge clk or negedge rstn) begin
     end
 end
 
-assign wr_addr_exist = (addr==8'h02 || addr==8'h2B || addr==8'h2C);
-assign rd_addr_exist = (addr<=8'h04||addr==8'h20||addr==8'h21||addr==8'h22||
-                        addr==8'h28||addr==8'h29||addr==8'h2B||addr==8'h2C||
-                        addr==8'h30||addr==8'h31 || addr==8'h32);
+assign wr_addr_exist = (addr==8'h02||addr==8'h2B|| addr==8'h2C);
+assign rd_addr_exist = (addr<=8'h04||addr==8'h20|| addr==8'h21||addr==8'h22||
+                        addr==8'h28||addr==8'h29|| addr==8'h2B||addr==8'h2C||
+                        addr==8'h30||addr==8'h31||(addr==8'h32&&is_support_12v));
 
 always @(posedge clk or negedge rstn) begin
     if (!rstn) begin
