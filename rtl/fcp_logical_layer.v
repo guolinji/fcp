@@ -204,7 +204,7 @@ always @(posedge clk) begin
     ID_OUI0                 <= 8'b10111011;
     CAPABILITIES            <= 8'h01;
     DISCRETE_CAPABILITIES   <= is_support_12v ? 8'h2 : 8'h1;
-    MAX_PWR                 <= 8'h40;
+    MAX_PWR                 <= 8'h24;
     DISCRETE_VOUT_0         <= 8'd50;
     DISCRETE_VOUT_1         <= 8'd90;
     DISCRETE_VOUT_2         <= 8'd120;
